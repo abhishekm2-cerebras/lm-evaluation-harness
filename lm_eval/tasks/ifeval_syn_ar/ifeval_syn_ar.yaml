@@ -1,0 +1,2 @@
+task: ifeval-syn-ar
+class: !function task.IFevalSynArTask

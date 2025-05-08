@@ -150,7 +150,7 @@ class ResponseLanguageChecker(Instruction):
             "Your ENTIRE response should be in {language} language, no other "
             + "language is allowed."
         )
-        return self._description_pattern.format(language=_LANGUAGES[self._language])
+        return self._description_pattern.format(language=_LANGUAGES[self._language] if len(self._language) == 2 else self._language)
 
     def get_instruction_args(self):
         """Returns the keyword args of `build_description`."""
