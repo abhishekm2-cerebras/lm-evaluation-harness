@@ -43,7 +43,7 @@ class IFevalSynArTask(ConfigurableTask):
     VERSION = 0 
     DATASET_PATH = "/mnt/local/shared/abhishekm/datasets/if-eval-arabic-synthetic"
     DATASET_NAME = "default" 
-    data_files = {"validation": "ifeval_gemini-2.0-flash-thinking-exp-01-21_functions_cleaned_reformatted_fixed.jsonl"}
+    data_files = {"validation": "ifeval_gemini-2.0-flash-thinking-exp-01-21_functions_cleaned_reformatted_validated.jsonl"}
 
     def __init__(self, **kwargs):
         super().__init__(config={"metadata": {"version": self.VERSION}, "dataset_kwargs": {"data_files": self.data_files}})
@@ -85,7 +85,7 @@ class IFevalSynArTask(ConfigurableTask):
             Instance(
                 request_type="generate_until",
                 doc=doc,
-                arguments=(ctx, {"until": [], "do_sample": False, "temperature": 1.0, "max_gen_toks": 8192}),
+                arguments=(ctx, {"until": [], "do_sample": False, "temperature": 1.0, "max_gen_toks": 8000}),
                 idx=0,
                 **kwargs,
             )

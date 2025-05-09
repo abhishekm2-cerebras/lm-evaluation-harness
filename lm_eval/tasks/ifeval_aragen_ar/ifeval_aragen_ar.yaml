@@ -1,0 +1,2 @@
+task: ifeval-aragen-ar
+class: !function task.IFevalAragenArTask

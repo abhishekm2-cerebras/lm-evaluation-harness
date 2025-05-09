@@ -34,7 +34,7 @@ _InstructionArgsDtype = Optional[Dict[str, Union[int, str, Sequence[str]]]]
 _LANGUAGES = instructions_util.LANGUAGE_CODES
 
 # The relational operation for comparison.
-_COMPARISON_RELATION = ("less than", "at least")
+_COMPARISON_RELATION = ("less than", "at least", "exactly")
 
 # The maximum number of sentences.
 _MAX_NUM_SENTENCES = 20
@@ -251,6 +251,8 @@ class NumberOfSentences(Instruction):
             return num_sentences < self._num_sentences_threshold
         elif self._comparison_relation == _COMPARISON_RELATION[1]:
             return num_sentences >= self._num_sentences_threshold
+        elif self._comparison_relation == _COMPARISON_RELATION[2]:
+            return num_sentences == self._num_sentences_threshold
 
 
 class PlaceholderChecker(Instruction):
@@ -552,10 +554,16 @@ class SectionChecker(Instruction):
           True if the number of sections in the response is greater than or equal to
           the minimum number of sections; otherwise, False.
         """
-        section_splitter_patten = r"\s?" + self._section_spliter + r"\s?\d+\s?"
-        sections = re.split(section_splitter_patten, value)
-        num_sections = len(sections) - 1
-        return num_sections >= self._num_sections
+        try:
+            section_splitter_patten = r"\s?" + self._section_spliter + r"\s?\d+\s?"
+            sections = re.split(section_splitter_patten, value)
+        
+            num_sections = len(sections) - 1
+            return num_sections >= self._num_sections
+        except Exception as e:
+            print(f"Error in SectionChecker: {e}")
+            print(f"Value: {value}")
+            return False
 
 
 class ParagraphChecker(Instruction):
@@ -776,7 +784,13 @@ class KeywordChecker(Instruction):
     def check_following(self, value):
         """Check if the response contain the expected keywords."""
         for keyword in self._keywords:
-            if not re.search(keyword, value, flags=re.IGNORECASE):
+            try:
+                if not re.search(keyword, value, flags=re.IGNORECASE):
+                    return False
+            except Exception as e:
+                print(f"Error in KeywordChecker: {e}")
+                print(f"Value: {value}")
+                print(f"Keyword: {keyword}")
                 return False
         return True
 
@@ -850,6 +864,8 @@ class KeywordFrequencyChecker(Instruction):
             return actual_occurrences < self._frequency
         elif self._comparison_relation == _COMPARISON_RELATION[1]:
             return actual_occurrences >= self._frequency
+        elif self._comparison_relation == _COMPARISON_RELATION[2]:
+            return actual_occurrences == self._frequency
 
 
 class NumberOfWords(Instruction):
@@ -909,6 +925,8 @@ class NumberOfWords(Instruction):
             return num_words < self._num_words
         elif self._comparison_relation == _COMPARISON_RELATION[1]:
             return num_words >= self._num_words
+        elif self._comparison_relation == _COMPARISON_RELATION[2]:
+            return num_words == self._num_words
 
 
 class JsonFormat(Instruction):
@@ -1148,7 +1166,11 @@ class ForbiddenWords(Instruction):
     def check_following(self, value):
         """Check if the response does not contain the expected keywords."""
         for word in self._forbidden_words:
-            if re.search(r"\b" + word + r"\b", value, flags=re.IGNORECASE):
+            try:
+                if re.search(r"\b" + word + r"\b", value, flags=re.IGNORECASE):
+                    return False
+            except Exception as e:
+                print(f"Error in ForbiddenWords: {e}")
                 return False
         return True
 
@@ -1362,7 +1384,7 @@ class TitleChecker(Instruction):
 class LetterFrequencyChecker(Instruction):
     """Checks letter frequency."""
 
-    def build_description(self, *, letter=None, let_frequency=None, let_relation=None):
+    def build_description(self, *, letter=None, let_frequency=None, let_relation=None, relation=None, frequency=None):
         """Build the instruction description.
 
         Args:
@@ -1378,6 +1400,17 @@ class LetterFrequencyChecker(Instruction):
         Returns:
           A string representing the instruction description.
         """
+        
+        if let_relation is None and relation is not None:
+            let_relation = relation
+        if let_frequency is None and frequency is not None:
+            let_frequency = frequency
+        
+        if let_relation not in _COMPARISON_RELATION and relation in _COMPARISON_RELATION:
+            let_relation = relation
+        if let_frequency not in _COMPARISON_RELATION and frequency in _COMPARISON_RELATION:
+            let_frequency = frequency
+
         if (
             not letter
             or len(letter) > 1
