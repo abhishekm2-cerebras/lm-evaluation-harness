@@ -6,16 +6,99 @@ import logging
 
 from lm_eval.api.instance import Instance
 from lm_eval.api.task import ConfigurableTask
-# from lm_eval.tasks.ifeval_syn_ar.gemini_client import gemini_generate
-from lm_eval.tasks.ifeval import instructions_registry
-from lm_eval.tasks.ifeval.utils import test_instruction_following_strict, test_instruction_following_loose, InputExample, OutputExample
+from lm_eval.tasks.ifeval.utils import InputExample, OutputExample
+from lm_eval.tasks.ifeval_inception_ar.instructions import * 
+
+
+
+
+def test_instruction_following_strict(
+    inp,
+    response,
+):
+    """Tests response to see if instructions are followed."""
+    is_following_list = []
+    index = inp.key
+    fn_name = f"DataIdx{index}InstructionChecker"
+
+    try:
+        instruction = eval(fn_name)()
+        if response.strip() and instruction.check_following(response):
+            is_following_list.append(True)
+        else:
+            is_following_list.append(False)
+    except Exception as e:
+        logging.error(f"Error creating instruction: {e}")
+        is_following_list.append(False)
+    
+    return OutputExample(
+        instruction_id_list=[fn_name],
+        prompt=inp.prompt,
+        response=response,
+        follow_all_instructions=all(is_following_list),
+        follow_instruction_list=is_following_list,
+    )
+
+
+def test_instruction_following_loose(
+    inp,
+    response,
+):
+    """Tests response for an upper bound for following instructions."""
+    r = response.split("\n")
+    response_remove_first = "\n".join(r[1:]).strip()
+    response_remove_last = "\n".join(r[:-1]).strip()
+    response_remove_both = "\n".join(r[1:-1]).strip()
+    revised_response = response.replace("*", "")
+    revised_response_remove_first = response_remove_first.replace("*", "")
+    revised_response_remove_last = response_remove_last.replace("*", "")
+    revised_response_remove_both = response_remove_both.replace("*", "")
+    all_responses = [
+        response,
+        revised_response,
+        response_remove_first,
+        response_remove_last,
+        response_remove_both,
+        revised_response_remove_first,
+        revised_response_remove_last,
+        revised_response_remove_both,
+    ]
+    index = inp.key
+    fn_name = f"DataIdx{index}InstructionChecker"
+    is_following_list = []
+
+    try:
+        instruction = eval(fn_name)()
+        is_following = False
+        for r in all_responses:
+            if r.strip() and instruction.check_following(r):
+                is_following = True
+                break
+
+        is_following_list.append(is_following)
+        if response.strip() and instruction.check_following(response):
+            is_following_list.append(True)
+        else:
+            is_following_list.append(False)
+    except Exception as e:
+        logging.error(f"Error creating instruction: {e}")
+        is_following_list.append(False)
+
+
+    return OutputExample(
+        instruction_id_list=[fn_name],
+        prompt=inp.prompt,
+        response=response,
+        follow_all_instructions=all(is_following_list),
+        follow_instruction_list=is_following_list,
+    )
 
 
 class IFevalInceptionArTask(ConfigurableTask):
     VERSION = 0 
-    DATASET_PATH = "/mnt/local/shared/abhishekm/datasets/aragen-ifeval"
+    DATASET_PATH = "/mnt/local/shared/abhishekm/datasets/inception-ifeval-ar"
     DATASET_NAME = "default" 
-    data_files = {"validation": "ar_jais_plus_8b_dpo.jsonl"}
+    data_files = {"validation": "ar_jais_plus_8b_dpo_indexed.jsonl"}
 
     def __init__(self, **kwargs):
         super().__init__(config={"metadata": {"version": self.VERSION}, "dataset_kwargs": {"data_files": self.data_files}})
@@ -57,17 +140,18 @@ class IFevalInceptionArTask(ConfigurableTask):
             Instance(
                 request_type="generate_until",
                 doc=doc,
-                arguments=(ctx, {"until": [], "do_sample": False, "temperature": 1.0, "max_gen_toks": 8000}),
+                arguments=(ctx, {"until": [], "do_sample": False, "temperature": 0.0, "max_gen_toks": 1280}),
                 idx=0,
                 **kwargs,
             )
         ]
     
 
+
     def process_results(self, doc, results):
         inp = InputExample(
-            key=doc["idx"],
-            instruction_id_list=doc["instruction_id_list"],
+            key=doc["key"],
+            instruction_id_list=[],
             prompt=doc["prompt"],
             kwargs={},
         )

@@ -12,7 +12,7 @@ from lm_eval.tasks.aragen_inception_ar.gemini_client import gemini_generate
 
 class AragenInceptionArTask(ConfigurableTask):
     VERSION = 0 
-    DATASET_PATH = "/net/abhishekm2-dev/srv/nfs/abhishekm2-data/ws/datasets/inception_aragen_ar"
+    DATASET_PATH = "/mnt/local/shared/abhishekm/datasets/inception-aragen-ar"
     DATASET_NAME = "default" 
     data_files = {"validation": "inception_aragen_samples.jsonl"}
 
@@ -26,7 +26,7 @@ class AragenInceptionArTask(ConfigurableTask):
         return True
 
     def validation_docs(self):
-        return self.dataset["validation"].select(range(5))
+        return self.dataset["validation"]
 
     def doc_to_text(self, doc):
         return doc["instruction"]
@@ -68,7 +68,13 @@ class AragenInceptionArTask(ConfigurableTask):
             if key not in scores:
                 refined_scores[key] = 0 
             else:
-                refined_scores[key] = scores[key]['score']
+                try:
+                    refined_scores[key] = scores[key]['score']
+                except TypeError:
+                    refined_scores[key] = scores[key] 
+                except Exception as e:
+                    logging.error(f"Error processing scores for key {key}: {e}")
+                    refined_scores[key] = 0
         
         return refined_scores
 
