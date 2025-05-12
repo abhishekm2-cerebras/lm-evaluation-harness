@@ -11,7 +11,7 @@ from lm_eval.tasks.ifeval import instructions_registry
 from lm_eval.tasks.ifeval.utils import test_instruction_following_strict, test_instruction_following_loose, InputExample, OutputExample
 
 
-class IFevalAragenArTask(ConfigurableTask):
+class IFevalInceptionArTask(ConfigurableTask):
     VERSION = 0 
     DATASET_PATH = "/mnt/local/shared/abhishekm/datasets/aragen-ifeval"
     DATASET_NAME = "default" 

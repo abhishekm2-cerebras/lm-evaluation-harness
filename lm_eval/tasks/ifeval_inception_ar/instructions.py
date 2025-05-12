@@ -19,7 +19,14 @@ class DataIdx1InstructionChecker(AragenInstructions):
         super().__init__("idx_1")
     
     def check_following(self, value):
-        return True
+        """You will implement the logic of the function here to see if the response is correct or not.
+        Args:
+            value: A string representing the response.
+
+        Returns:
+            True if the response follows the instruction or False otherwise.
+        """
+        return 
 
     
     

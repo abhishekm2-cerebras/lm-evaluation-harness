@@ -1,0 +1,2 @@
+task: aragen-inception-ar
+class: !function task.AragenInceptionArTask

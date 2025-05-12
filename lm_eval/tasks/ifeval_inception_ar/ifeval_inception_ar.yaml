@@ -1,0 +1,2 @@
+task: ifeval-inception-ar
+class: !function task.IFevalInceptionArTask
