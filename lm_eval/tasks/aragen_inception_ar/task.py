@@ -60,7 +60,7 @@ class AragenInceptionArTask(ConfigurableTask):
     
     def process_results(self, doc, results):
         response = results[0]
-        scores = get_3c3h_scores(response)
+        scores = {}# get_3c3h_scores(response)
         refined_scores = {}
 
         # For the keys which are not present in the scores, set the score to 0

@@ -6,47 +6,105 @@ import logging
 
 from lm_eval.api.instance import Instance
 from lm_eval.api.task import ConfigurableTask
-# from lm_eval.tasks.ifeval_syn_ar.gemini_client import gemini_generate
-from lm_eval.tasks.ifeval import instructions_registry
-from lm_eval.tasks.ifeval.utils import test_instruction_following_strict, test_instruction_following_loose, InputExample, OutputExample
+from lm_eval.tasks.ifeval.utils import InputExample, OutputExample
+from lm_eval.tasks.ifeval_syn_ar.instructions import * 
 
 
-_SUFFIX_TO_PREFIX_MAPPING = {
-    "existence": "keywords:",
-    "frequency": "keywords:",
-    "forbidden_words": "keywords:",
-    "letter_frequency": "keywords:",  # As per your structure, this falls under _KEYWORD
-    "response_language": "language:",
-    "number_sentences": "length_constraints:",
-    "number_paragraphs": "length_constraints:",
-    "number_words": "length_constraints:",
-    "nth_paragraph_first_word": "length_constraints:",
-    "number_placeholders": "detectable_content:",
-    "postscript": "detectable_content:",
-    "number_bullet_lists": "detectable_format:",
-    "constrained_response": "detectable_format:",
-    "number_highlighted_sections": "detectable_format:",
-    "multiple_sections": "detectable_format:",
-    "json_format": "detectable_format:",
-    "title": "detectable_format:",
-    "two_responses": "combination:",
-    "repeat_prompt": "combination:",
-    "end_checker": "startend:",
-    "capital_word_frequency": "change_case:",
-    "english_capital": "change_case:",
-    "english_lowercase": "change_case:",
-    "no_comma": "punctuation:",
-    "quotation": "startend:",
-}
+def test_instruction_following_strict(
+    inp,
+    response,
+):
+    """Tests response to see if instructions are followed."""
+    is_following_list = []
+    index = inp.key
+    fn_name = f"DataIdx{index}InstructionChecker"
+
+    try:
+        instruction = eval(fn_name)()
+        if response.strip() and instruction.check_following(response):
+            is_following_list.append(True)
+        else:
+            is_following_list.append(False)
+    except Exception as e:
+        logging.error(f"Error creating instruction: {e}")
+        is_following_list.append(False)
+    
+    return OutputExample(
+        instruction_id_list=[fn_name],
+        prompt=inp.prompt,
+        response=response,
+        follow_all_instructions=all(is_following_list),
+        follow_instruction_list=is_following_list,
+    )
+
+
+def test_instruction_following_loose(
+    inp,
+    response,
+):
+    """Tests response for an upper bound for following instructions."""
+    r = response.split("\n")
+    response_remove_first = "\n".join(r[1:]).strip()
+    response_remove_last = "\n".join(r[:-1]).strip()
+    response_remove_both = "\n".join(r[1:-1]).strip()
+    revised_response = response.replace("*", "")
+    revised_response_remove_first = response_remove_first.replace("*", "")
+    revised_response_remove_last = response_remove_last.replace("*", "")
+    revised_response_remove_both = response_remove_both.replace("*", "")
+    all_responses = [
+        response,
+        revised_response,
+        response_remove_first,
+        response_remove_last,
+        response_remove_both,
+        revised_response_remove_first,
+        revised_response_remove_last,
+        revised_response_remove_both,
+    ]
+    index = inp.key
+    fn_name = f"DataIdx{index}InstructionChecker"
+    is_following_list = []
+
+    try:
+        instruction = eval(fn_name)()
+        is_following = False
+        for r in all_responses:
+            if r.strip() and instruction.check_following(r):
+                is_following = True
+                break
+
+        is_following_list.append(is_following)
+        if response.strip() and instruction.check_following(response):
+            is_following_list.append(True)
+        else:
+            is_following_list.append(False)
+    except Exception as e:
+        logging.error(f"Error creating instruction: {e} | {fn_name}")
+        is_following_list.append(False)
+
+
+    return OutputExample(
+        instruction_id_list=[fn_name],
+        prompt=inp.prompt,
+        response=response,
+        follow_all_instructions=all(is_following_list),
+        follow_instruction_list=is_following_list,
+    )
+
+
 # /net/abhishekm2-dev/srv/nfs/abhishekm2-data/ws/datasets/synthetic_data_gemini_ifeval_arabic/ifeval/ifeval_gemini-2.0-flash-thinking-exp-01-21_functions_cleaned_reformatted_fixed.jsonl
 class IFevalSynArTask(ConfigurableTask):
     VERSION = 0 
     DATASET_PATH = "/mnt/local/shared/abhishekm/datasets/if-eval-arabic-synthetic"
     DATASET_NAME = "default" 
-    data_files = {"validation": "ifeval_gemini-2.0-flash-thinking-exp-01-21_functions_cleaned_reformatted_validated.jsonl"}
+    data_files = {"validation": "ifeval_gemini-2.0-flash-thinking-exp-01-21_shuffled_indexed.jsonl"}
+    eval_fn_path = "/mnt/local/shared/abhishekm/projects/synthetic-data-generation/synthetic_ifeval_ar_eval_fns/synthetic_ifeval_ar_eval_fns.jsonl"
+    # Count lines in the eval_fn_path
+    
 
     def __init__(self, **kwargs):
         super().__init__(config={"metadata": {"version": self.VERSION}, "dataset_kwargs": {"data_files": self.data_files}})
+        
 
     def has_training_docs(self):
         return False
@@ -58,10 +116,13 @@ class IFevalSynArTask(ConfigurableTask):
         return False
 
     def validation_docs(self):
-        return self.dataset["validation"]
+        with open(self.eval_fn_path, "r") as f:
+            self.total_lines = sum(1 for _ in f)
+        print(f"Total lines in {self.eval_fn_path}: {self.total_lines}")
+        return self.dataset["validation"].select(range(self.total_lines))
 
     def doc_to_text(self, doc):
-        return doc["prompt"]
+        return doc["instruction"]
 
     def doc_to_target(self, doc):
         return None
@@ -96,60 +157,12 @@ class IFevalSynArTask(ConfigurableTask):
     def process_results(self, doc, results):
         inp = InputExample(
             key=doc["key"],
-            instruction_id_list=doc["instruction_id_list"],
-            prompt=doc["prompt"],
-            kwargs=doc["kwargs"],
+            instruction_id_list=[],
+            prompt=doc["instruction"],
+            kwargs={},
         )
         response = results[0]
 
-        # Initialize new lists for the output
-        new_instruction_id_list = []
-        new_kwargs_list = []
-
-        # Iterate over the original instruction_id_list and kwargs
-        for instruction_id, current_kwargs in zip(doc["instruction_id_list"], doc["kwargs"]):
-            
-            if instruction_id == 'keywords:frequency' and "keywords" in current_kwargs:
-                # This is the instruction we want to transform and replace
-                
-                keywords_value = current_kwargs.get("keywords") # Use .get for safety
-
-                if isinstance(keywords_value, list):
-                    for keyword_item in keywords_value:
-                        if isinstance(keyword_item, str): # Ensure keyword_item is a string
-                            new_instruction_id_list.append("keywords:frequency") # Or "keywords:keyword_frequency" if you rename the instruction type
-                            
-                            # Create new kwargs dict, copy original, remove "keywords", add "keyword"
-                            transformed_kwargs = current_kwargs.copy() # Shallow copy is usually fine here
-                            del transformed_kwargs["keywords"] # Remove the plural "keywords"
-                            transformed_kwargs["keyword"] = keyword_item # Add the singular "keyword"
-                            new_kwargs_list.append(transformed_kwargs)
-                        else:
-                            print(f"Warning: Non-string item '{keyword_item}' found in 'keywords' list for instruction_id '{instruction_id}'. Skipping this keyword.")
-
-                else:
-                    new_instruction_id_list.append("keywords:frequency") # Or "keywords:keyword_frequency"
-                    transformed_kwargs = current_kwargs.copy()
-                    del transformed_kwargs["keywords"]
-                    transformed_kwargs["keyword"] = str(keywords_value)
-                    new_kwargs_list.append(transformed_kwargs)
-                
-            
-            elif "relation" in current_kwargs and current_kwargs.get("relation") == "at most":
-               new_instruction_id_list.append(instruction_id)
-               transformed_kwargs = current_kwargs.copy()
-               del transformed_kwargs["relation"]
-               transformed_kwargs["relation"] = "less than"
-               new_kwargs_list.append(transformed_kwargs)
-
-            else:
-                # This instruction_id is not 'keywords:frequency' with "keywords"
-                # or doesn't meet the condition, so keep it as is.
-                new_instruction_id_list.append(instruction_id)
-                new_kwargs_list.append(current_kwargs)
-                
-        inp.instruction_id_list = new_instruction_id_list
-        inp.kwargs = new_kwargs_list
         out_strict = test_instruction_following_strict(inp, response)
         out_loose = test_instruction_following_loose(inp, response)
 
