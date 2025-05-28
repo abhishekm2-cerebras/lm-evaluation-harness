@@ -101,7 +101,7 @@ class IFevalInceptionArTask(ConfigurableTask):
     data_files = {"validation": "ar_jais_plus_8b_dpo_indexed.jsonl"}
 
     def __init__(self, **kwargs):
-        super().__init__(config={"metadata": {"version": self.VERSION}, "dataset_kwargs": {"data_files": self.data_files}})
+        super().__init__(config={"metadata": {"version": self.VERSION}, "dataset_kwargs": {"data_files": self.data_files}, "gen_kwargs": {"until": ["<|eot_id|>"]}})
 
     def has_training_docs(self):
         return False
