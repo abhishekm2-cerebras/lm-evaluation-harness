@@ -20,11 +20,14 @@ import logging
 import random
 import re
 import string
-from typing import Dict, Optional, Sequence, Union
+from typing import Dict, Optional, Sequence, Union, List
+
+from collections import Counter
+import unicodedata, re
 
 import langdetect
 
-from lm_eval.tasks.ifeval import instructions_util
+from lm_eval.tasks.ifeval_arabic_inception_hf import instructions_util
 
 
 logger = logging.getLogger(__name__)
@@ -1643,3 +1646,183 @@ class QuotationChecker(Instruction):
         """Checks if the response is wrapped with double quotation marks."""
         value = value.strip()
         return len(value) > 1 and value[0] == '"' and value[-1] == '"'
+
+
+
+class ListKeywordFrequencyChecker(Instruction):
+    def build_description(self, *, letters=None, frequency=None, relation=None, position=None):
+        """Build the instruction description.
+
+        Args:
+          keywords: A list of keywords that are expected in the response.
+          frequency: An integer specifying the number of times `keywords` is expected
+            to appear in the response.
+          relation: A string in (`less than`, `at least`), defining the relational
+            operator for comparison.
+            Two relational comparisons are supported for now:
+            if 'less than', the actual number of occurrences < frequency;
+            if 'at least', the actual number of occurrences >= frequency.
+
+        Returns:
+          A string representing the instruction description.
+        """
+        assert letters is not None, "letters is required"
+        assert position is not None, "position is required"
+        assert relation is not None, "relation is required"
+        assert frequency is not None, "frequency is required"
+
+        self._letters = letters
+        self._position = position
+        self._relation = relation
+        self._frequency = frequency
+
+        self._description_pattern = (
+            "In your response, the letter {letters} should appear {position} {relation} {frequency} times."
+        )
+
+        return self._description_pattern.format(
+            letters=self._letters,
+            position=self._position,
+            relation=self._relation,
+            frequency=self._frequency,
+        )
+    
+    def get_instruction_args(self):
+        return {
+            "letters": self._letters,
+            "position": self._position,
+            "relation": self._relation,
+            "frequency": self._frequency,
+        }
+    
+    def get_instruction_args_keys(self):    
+        return ["letters", "position", "relation", "frequency"]
+    
+    def check_following(self, value):
+        """Checks that the response contains the letter at the right frequency."""
+        count_dict = {letter: 0 for letter in self._letters}
+        words = re.findall(r'\b\w+\b', value)
+
+        for word in words:
+            if self._position == 'start':
+                for letter in self._letters:
+                    if word.startswith(letter):
+                        count_dict[letter] += 1
+            elif self._position == 'end':
+                for letter in self._letters:
+                    if word.endswith(letter):
+                        count_dict[letter] += 1
+        if self._relation == 'at least':
+            return all(count_dict[letter] >= self._frequency for letter in self._letters) 
+        elif self._relation == "less than":
+            return all(count_dict[letter] < self._frequency for letter in self._letters)
+        else:
+            raise ValueError(f"Unsupported relation type: {self._relation}")
+
+
+class ListKeywordExistenceChecker(Instruction):
+    def build_description(self, *, keywords=None, mode=None):
+        """Build the instruction description.
+
+        Args:
+          keywords: A list of keywords that are expected in the response.
+          mode: A string in (`all`, `any`), defining the mode of the instruction.
+        """
+        assert keywords is not None, "keywords is required"
+        assert mode is not None, "mode is required"
+
+        self._keywords = keywords
+        self._mode = mode
+
+        self._description_pattern = (
+            "In your response, the {mode} of the keywords {keywords} should appear."
+        )
+
+    
+    def get_instruction_args(self):
+        return {
+            "keywords": self._keywords,
+            "mode": self._mode,
+        }
+    
+    def get_instruction_args_keys(self):
+        return ["keywords", "mode"]
+    
+    def check_following(self, value):
+        """Checks that the response contains the keywords in the right mode."""
+        words = re.findall(r'\b\w+\b', value)
+        if self._mode == "all":
+            return all(keyword in words for keyword in self._keywords)
+        elif self._mode == "any":
+            return any(keyword in words for keyword in self._keywords)
+        else:
+            raise ValueError(f"Unsupported mode type: {self._mode}")
+
+
+class CountTashkeelChecker(Instruction):
+    def build_description(self, *, tashkeel_name=None, count=None):
+        """Build the instruction description.
+
+        Args:
+          tashkeel_name: A string in (`Kasratan`, `Dammatan`, `Fathatan`, `Shadda`), defining the tashkeel name.
+          count: An integer specifying the number of times `tashkeel_name` is expected to appear in the response.
+        """
+        assert tashkeel_name is not None, "tashkeel_name is required"
+        assert count is not None, "count is required"
+
+        self._tashkeel_name = tashkeel_name
+        self._count = count
+
+        self._description_pattern = (
+            "In your response, the {tashkeel_name} should appear {count} times."
+        )
+
+        return self._description_pattern.format(
+            tashkeel_name=self._tashkeel_name,
+            count=self._count,
+        )
+    
+    def get_instruction_args(self):
+        return {
+            "tashkeel_name": self._tashkeel_name,
+            "count": self._count,
+        }
+    
+    def get_instruction_args_keys(self):
+        return ["tashkeel_name", "count"]
+    
+    def check_following(self, value):
+        """Checks that the response contains the tashkeel in the right count."""
+        
+        TASHKEEL = {
+            # Tanwīn
+            "Fathatan": "\u064B",  # ً
+            "Dammatan": "\u064C",  # ٌ
+            "Kasratan": "\u064D",  # ٍ
+            # Short vowels
+            "Fatha":     "\u064E",  # َ
+            "Damma":     "\u064F",  # ُ
+            "Kasra":     "\u0650",  # ِ
+            # Shadda
+            "Shadda":    "\u0651",  # ّ
+        }
+
+        # -------------  normalise once, count once  -------------------
+        norm = unicodedata.normalize("NFKD", value)
+        char_counts = Counter(c for c in norm if unicodedata.combining(c))
+
+        name   = self._tashkeel_name
+        needed = self._count
+
+        if name not in TASHKEEL or not isinstance(needed, int) or needed < 0:
+            raise ValueError(f"Bad requirement spec: {name} {needed}")
+
+        mark = TASHKEEL[name]
+        have = char_counts.get(mark, 0)
+        return have == needed
+
+        
+        
+        
+            
+            

@@ -14,7 +14,7 @@
 
 """Registry of all instructions."""
 
-from lm_eval.tasks.ifeval import instructions
+from lm_eval.tasks.ifeval_arabic_inception_hf import instructions
 
 
 _KEYWORD = "keywords:"
@@ -71,6 +71,10 @@ INSTRUCTION_DICT = {
     _CHANGE_CASES + "english_lowercase": instructions.LowercaseLettersEnglishChecker,
     _PUNCTUATION + "no_comma": instructions.CommaChecker,
     _STARTEND + "quotation": instructions.QuotationChecker,
+    # Arabic specific instreuctions 
+    _FORMAT + "tashkeel": instructions.CountTashkeelChecker, 
+    _KEYWORD + "letter_list_freq": instructions.ListKeywordFrequencyChecker,
+    _KEYWORD + "list_existence": instructions.ListKeywordExistenceChecker,
 }
 
 INSTRUCTION_CONFLICTS = {
