@@ -51,8 +51,11 @@ _NUM_BULLETS = 5
 # The options of constrained response.
 _CONSTRAINED_RESPONSE_OPTIONS = (
     "My answer is yes.",
-    "My answer is no.",
+    "My answer is no.", 
     "My answer is maybe.",
+    "إجابتي هي نعم.",
+    "إجابتي هي لا.",
+    "إجابتي هي ربما."
 )
 
 # The options of starter keywords.
@@ -162,6 +165,21 @@ class ResponseLanguageChecker(Instruction):
     def get_instruction_args_keys(self):
         """Returns the args keys of `build_description`."""
         return ["language"]
+
+    # def language_composition(self, text):
+    #     words = re.findall(r'\b\w+\b', text)
+    #     lang_counts = Counter()\
+    #     import ipdb; ipdb.set_trace()
+    #     for word in words:
+    #         try:
+    #             lang = langdetect.detect(word)
+    #             lang_counts[lang] += 1
+    #         except:
+    #             pass
+
+    #     total = sum(lang_counts.values())
+    #     composition = {lang: round(count / total * 100, 2) for lang, count in lang_counts.items()}
+    #     return composition
 
     def check_following(self, value):
         """Check if the language of the entire response follows the instruction.
@@ -1554,8 +1572,9 @@ class CommaChecker(Instruction):
         return []
 
     def check_following(self, value):
-        """Checks that the response does not contain commas."""
-        return not re.search(r"\,", value)
+        """Checks that the response does not contain commas (both English and Arabic)."""
+        # Check for both English comma (,) and Arabic comma (،)
+        return not (re.search(r"\,", value) or re.search(r"،", value))
 
 
 class CapitalWordFrequencyChecker(Instruction):
