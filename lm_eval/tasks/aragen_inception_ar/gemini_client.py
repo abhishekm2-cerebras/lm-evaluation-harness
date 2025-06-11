@@ -96,7 +96,7 @@ class _RateLimiter:
 class GeminiClient:
     _DEFAULT_MODEL = "gemini-2.5-flash-preview-04-17"
     _DEFAULT_GENCFG = dict(
-        temperature=0.8,
+        temperature=0,
         top_p=0.95,
         top_k=50,
         max_output_tokens=65536,

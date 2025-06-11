@@ -255,6 +255,194 @@ class VLLM(TemplateLM):
     ):
         if generate:
             kwargs = self.modify_gen_kwargs(kwargs)
+
+            rejection_sample = kwargs.pop("rejection_sample", None)
+            if rejection_sample:
+                if (kwargs.get("temperature_thinking", 0) == 0) and (kwargs.get("temperature", 0) == 0):
+                    print("Warning: Rejection sampling works best with temperature/temperature_thinking > 0.")
+                assert "max_tokens_thinking" in kwargs, "Rejection sampling requires max_tokens_thinking to be set."
+
+            outputs_thinking = None
+            if any(["thinking" in k for k in kwargs]) or rejection_sample:
+                print("Separating thinking and answering generation.")
+                thinking_start = kwargs.pop("thinking_start", "<|im_start|>think")
+                thinking_end = kwargs.pop("thinking_end", "<|im_start|>answer")
+                thinking_n_ignore = kwargs.pop("thinking_n_ignore", None)
+                thinking_n_ignore_str = kwargs.pop("thinking_n_ignore_str", None) # e.g. "Let me double check step-by-step.")
+                if thinking_n_ignore_str is not None:
+                    print(f"Thinking ignore string: {thinking_n_ignore_str}")
+                    thinking_n_ignore_str_tok = self.tok_encode(thinking_n_ignore_str)
+                until_thinking = [kwargs.pop("until_thinking", "<|im_start|>")]
+                if "until_thinking_2" in kwargs:
+                    until_thinking.append(kwargs.pop("until_thinking_2"))
+                if stop is not None:
+                    until_thinking.extend(stop)
+                print(f"Thinking start: {thinking_start}, Thinking end: {thinking_end}, Stop: {until_thinking}")
+                thinking_start_tok = self.tok_encode(thinking_start)
+                thinking_end_tok = self.tok_encode(thinking_end)
+                thinking_end_max = thinking_end + "\nFinal Answer:"
+                thinking_end_max_tok = self.tok_encode(thinking_end_max)
+                newline_tok = self.tok_encode("\n")
+                # Cast to list to avoid `dictionary changed size during iteration`
+                sampling_params_thinking = {k.replace("_thinking", ""): kwargs.pop(k) for k, v in list(kwargs.items()) if "thinking" in k}
+                # Add all other kwargs but keep sampling_params_thinking version if duplicate key
+                sampling_params_thinking = {**kwargs, **sampling_params_thinking}
+                if "max_tokens" in sampling_params_thinking:
+                    if sampling_params_thinking["max_tokens"] == "auto":
+                        # Leave 100 tokens for answer
+                        sampling_params_thinking["max_tokens"] = max_tokens - max([len(x) for x in requests]) - len(thinking_start_tok) - len(thinking_end_max_tok) - 100
+                        print(f"Auto setting max_tokens_thinking to {sampling_params_thinking['max_tokens']}")
+                    else:
+                        sampling_params_thinking["max_tokens"] = int(sampling_params_thinking["max_tokens"])
+                    if rejection_sample:
+                        sampling_params_thinking["max_tokens"] += 1
+                else:
+                    sampling_params_thinking["max_tokens"] = max_tokens
+                until_thinking_tok = self.tok_encode(until_thinking)
+                if ("min_tokens" in sampling_params_thinking) or (thinking_n_ignore is not None):
+                    if thinking_n_ignore is not None:
+                        sampling_params_thinking["min_tokens"] = 1
+                    else:
+                        sampling_params_thinking["min_tokens"] = int(sampling_params_thinking["min_tokens"])
+                    
+                    until_thinking_tok = [x for x in until_thinking_tok if len(x) == 1]
+                    assert all([len(x) == 1 for x in until_thinking_tok]), "min_tokens_thinking only supports until_thinking tokens that are 1 token long"
+                    # min_tokens will not ignore `stop`, only `stop_token_ids` are ignored so need to use these
+                    sampling_params_thinking["stop_token_ids"] = [x[0] for x in until_thinking_tok]
+                else:
+                    sampling_params_thinking["stop"] = until_thinking
+                requests = [req + thinking_start_tok for req in requests]
+                sampling_params = SamplingParams(**sampling_params_thinking)
+
+                if rejection_sample:
+                    requests_thinking = copy.deepcopy(requests)
+                    outputs_thinking = [None] * len(requests_thinking)
+                    i = 0
+                    while True:
+                        outputs_tmp = self.model.generate(
+                            prompt_token_ids=requests_thinking,
+                            sampling_params=sampling_params,
+                            use_tqdm=True if self.batch_size == "auto" else False,
+                        )
+                        # Save ones that are already below the limit
+                        outputs_tmp2 = copy.deepcopy(outputs_thinking)
+                        for j, o in enumerate(outputs_tmp):
+                            if len(o.outputs[0].token_ids) <= sampling_params_thinking["max_tokens"] - 1:
+                                if outputs_tmp2[j] is None:
+                                    outputs_thinking[j] = o
+                                else:
+                                    for k, t in enumerate(outputs_tmp2[j:] + outputs_tmp2[:j]):
+                                        if t is None:
+                                            idx = j + k if j + k < len(outputs_thinking) else j + k - len(outputs_thinking)
+                                            outputs_thinking[idx] = o
+                                            break
+
+                        # Collect requests remaining
+                        requests_thinking_new = [None] * len(requests_thinking)
+                        for j, o in enumerate(outputs_thinking):
+                            if outputs_thinking[j] is None:
+                                requests_thinking_new[j] = requests_thinking[j]
+
+                        samples_left = sum([x is not None for x in requests_thinking_new])
+
+                        if not(samples_left): break
+                        gen_tokens_all = [len(o.outputs[0].token_ids) for o in outputs_tmp]
+                        print(f"Samples left: {samples_left}, gen_tokens_all: {gen_tokens_all}, i: {i}")
+                        # Fill up empty request slots with duplicates of other requests that need to be rerun
+                        # Fill each None with the first non-None request after it
+                        for j, r in enumerate(requests_thinking_new):
+                            if r is None:
+                                for k, r2 in enumerate(requests_thinking_new[j:] + requests_thinking_new[:j]):
+                                    if r2 is not None:
+                                        requests_thinking_new[j] = r2
+                                        break
+                        requests_thinking = requests_thinking_new
+                        i += 1
+                    print(f'Rejection sampling took {i} iterations to generate {sampling_params_thinking["max_tokens"] - 1} tokens.')
+                elif thinking_n_ignore is not None:
+                    print("Will ignore end of thinking " + str(thinking_n_ignore) + " times.")
+                    # Add 1 to account for first generation w/o ignoring
+                    thinking_n_ignore = int(thinking_n_ignore) + 1
+                    outputs_thinking = [None] * len(requests)
+                    requests_tmp = copy.deepcopy(requests)
+                    indices = list(range(len(requests)))
+                    for i in range(thinking_n_ignore):
+                        outputs_tmp = self.model.generate(
+                            prompt_token_ids=requests_tmp,
+                            sampling_params=sampling_params,
+                            use_tqdm=True if self.batch_size == "auto" else False,
+                        )
+                        indices_new = []
+                        requests_tmp_new = []
+                        for j, o in enumerate(outputs_tmp):
+                            idx = indices[j]
+                            assert len(o.outputs) == 1
+                            cont = list(o.outputs[0].token_ids)
+                            # Final; do not generate further
+                            if (o.outputs[0].finish_reason == "length") or (i == thinking_n_ignore - 1):
+                                if outputs_thinking[idx] is not None:
+                                    outputs_thinking[idx].outputs[0].text += o.outputs[0].text
+                                    outputs_thinking[idx].outputs[0].token_ids += cont
+                                    outputs_thinking[idx].outputs[0].finish_reason = o.outputs[0].finish_reason
+                                else:
+                                    outputs_thinking[idx] = o
+                                    outputs_thinking[idx].outputs[0].token_ids = cont
+                                    outputs_thinking[idx].outputs[0].finish_reason = o.outputs[0].finish_reason
+                            else:
+                                # When using `stop`, the stop text will not be in the text, but still in the token_ids so remove it
+                                for toks in until_thinking_tok:
+                                    if cont[-len(toks):] == toks:
+                                        cont = cont[:-len(toks)]
+                                
+                                if thinking_n_ignore_str is not None:
+                                    cont += thinking_n_ignore_str_tok
+                                    o.outputs[0].text += thinking_n_ignore_str
+
+                                if outputs_thinking[idx] is not None:
+                                    outputs_thinking[idx].outputs[0].text += o.outputs[0].text
+                                    outputs_thinking[idx].outputs[0].token_ids += cont
+                                else:
+                                    outputs_thinking[idx] = o
+                                    outputs_thinking[idx].outputs[0].token_ids = cont
+
+                                requests_tmp_new.append(requests_tmp[j] + cont)
+                                indices_new.append(idx)
+                        requests_tmp = requests_tmp_new
+                        indices = indices_new
+                    for idx in list(range(len(requests))):
+                        if len(outputs_thinking[idx].outputs[0].token_ids) > sampling_params_thinking["max_tokens"]:
+                            print(f'Warning: Generated more than {sampling_params_thinking["max_tokens"]} tokens. Cutting.')
+                            outputs_thinking[idx].outputs[0].token_ids = outputs_thinking[idx].outputs[0].token_ids[:sampling_params_thinking["max_tokens"]]
+
+                    
+                else:
+                    outputs_thinking = self.model.generate(
+                        prompt_token_ids=requests,
+                        sampling_params=sampling_params,
+                        use_tqdm=True if self.batch_size == "auto" else False,
+                    )
+                
+                for i, o in enumerate(outputs_thinking):
+                    assert len(o.outputs) == 1
+                    cont = list(o.outputs[0].token_ids)
+                    # When using `stop`, the stop text will not be in the text, but still in the token_ids so remove it
+                    for toks in until_thinking_tok:
+                        if cont[-len(toks):] == toks:
+                            cont = cont[:-len(toks)]
+
+                    if o.outputs[0].finish_reason == "length":
+                        assert not rejection_sample, "Rejection sampling should not reach this point."
+                        # \n appears a lot so a decent chance it happend to just be the last token in which case we don't need to add a newline
+                        if (o.outputs[0].text[-1] == "\n") or (thinking_start[0] == "\n"):
+                            requests[i] += cont + thinking_end_max_tok
+                            outputs_thinking[i].outputs[0].text = thinking_start + outputs_thinking[i].outputs[0].text + thinking_end_max
+                        else:
+                            requests[i] += cont + newline_tok + thinking_end_max_tok
+                            outputs_thinking[i].outputs[0].text = thinking_start + outputs_thinking[i].outputs[0].text + "\n" + thinking_end_max
+                    else:
+                        requests[i] += cont + thinking_end_tok
+                        outputs_thinking[i].outputs[0].text = thinking_start + outputs_thinking[i].outputs[0].text + thinking_end
+                
             sampling_params = SamplingParams(max_tokens=max_tokens, stop=stop, **kwargs)
         else:
             sampling_params = SamplingParams(

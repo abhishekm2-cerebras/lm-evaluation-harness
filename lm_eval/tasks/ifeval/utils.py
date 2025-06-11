@@ -1,7 +1,7 @@
 import dataclasses
 from typing import Dict, Optional, Union
 
-from lm_eval.tasks.ifeval import instructions_registry
+from lm_eval.tasks.ifeval_arabic_inception_hf import instructions_registry
 
 
 @dataclasses.dataclass
@@ -85,6 +85,7 @@ def test_instruction_following_loose(
         instruction = instruction_cls(instruction_id)
 
         # Remove None values from kwargs to avoid unexpected keyword argument errors in build_description method.
+        import ipdb; ipdb.set_trace()
         kwargs = {k: v for k, v in inp.kwargs[index].items() if v}
         instruction.build_description(**kwargs)
         args = instruction.get_instruction_args()
