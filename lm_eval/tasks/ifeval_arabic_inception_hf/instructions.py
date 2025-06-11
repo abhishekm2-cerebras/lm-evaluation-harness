@@ -58,6 +58,9 @@ _CONSTRAINED_RESPONSE_OPTIONS = (
     "إجابتي هي ربما."
 )
 
+ARABIC_ALPHABET = "ابتثجحخدذرزسشصضطظعغفقكلمنهوي"
+
+
 # The options of starter keywords.
 _STARTER_OPTIONS = (
     "I would say",
@@ -75,17 +78,28 @@ _STARTER_OPTIONS = (
     "In my view",
     "My take on it is",
     "As per my perception",
+    "أعتقد أن",
+    "في رأيي",
+    "جوابي هو",
+    "من وجهة نظري",
+    "حسب ما أرى"
 )
+
+
 
 # The options of ending keywords.
 # TODO(jeffreyzhou) add more ending options
-_ENDING_OPTIONS = ("Any other questions?", "Is there anything else I can help with?")
+_ENDING_OPTIONS = (
+    "Any other questions?", "Is there anything else I can help with?",
+    "هل هناك أي أسئلة أخرى؟",
+    "هل يمكنني المساعدة في شيء آخر؟"
+    )
 
 # The number of highlighted sections.
 _NUM_HIGHLIGHTED_SECTIONS = 4
 
 # The section splitter.
-_SECTION_SPLITER = ("Section", "SECTION")
+_SECTION_SPLITER = ("Section", "SECTION", "قسم", "الجزء")
 
 # The number of sections.
 _NUM_SECTIONS = 5
@@ -94,7 +108,7 @@ _NUM_SECTIONS = 5
 _NUM_PARAGRAPHS = 5
 
 # The postscript marker.
-_POSTSCRIPT_MARKER = ("P.S.", "P.P.S")
+_POSTSCRIPT_MARKER = ("P.S.", "P.P.S", "م.", "ملحوظة")
 
 # The number of keywords.
 _NUM_KEYWORDS = 2
@@ -136,27 +150,21 @@ class ResponseLanguageChecker(Instruction):
     """Check the language of the entire response."""
 
     def build_description(self, *, language=None):
-        """Build the instruction description.
+        """Build the instruction description."""
+        # For an Arabic-only benchmark, we always default to "ar".
+        # The `language` arg is kept for potential fixed-test cases if needed.
+        self._language = language or "ar"
 
-        Args:
-          language: A string representing the expected language of the response. The
-            language has to comply to the 97 types defined in
-            `langid.py` (https://pypi.org/project/langid/1.1.5/), which follows
-            ISO 639-1 codes (https://en.wikipedia.org/wiki/List_of_ISO_639-1_codes);
-            for example, `en` for English, `zh` for Chinese, `fr` for French.
-
-        Returns:
-          A string representing the instruction description.
-        """
-        self._language = language
-        if self._language is None:
-            self._language = random.choice(list(_LANGUAGES.keys()))
-        # TODO(tianjianlu): opens the description generation to more choices.
+        # The description can be made bilingual for clarity to the researcher
+        # but the key is that the instruction to the LLM will be in one language.
+        # Example instruction text could be:
+        # "يجب أن تكون إجابتك بأكملها باللغة العربية، ولا يُسمح بأي لغة أخرى."
+        # For consistency with IFEVAL, we can keep the English description.
         self._description_pattern = (
             "Your ENTIRE response should be in {language} language, no other "
             + "language is allowed."
         )
-        return self._description_pattern.format(language=_LANGUAGES[self._language] if len(self._language) == 2 else self._language)
+        return self._description_pattern.format(language=_LANGUAGES[self._language])
 
     def get_instruction_args(self):
         """Returns the keyword args of `build_description`."""
@@ -664,24 +672,28 @@ class PostscriptChecker(Instruction):
         return ["postscript_marker"]
 
     def check_following(self, value):
-        """Checks if the response follows the postscript format.
+        """Checks if the response follows the postscript format."""
+        value = value.lower().strip() # Keep lower for English, strip for all
+        marker = self._postscript_marker
 
-        Args:
-          value: a string representing the response. The response is expected to
-            contain a postscript section.
-
-        Returns:
-          True if the response contains a postscript section starting with
-          the keyword containing in the `instruction_args`; otherwise False.
-        """
-        value = value.lower()
-        if self._postscript_marker == "P.P.S":
+        # Build a robust pattern based on the marker
+        if marker == "P.P.S":
+            # Handles p.p.s, p. p. s., etc.
             postscript_pattern = r"\s*p\.\s?p\.\s?s.*$"
-        elif self._postscript_marker == "P.S.":
+        elif marker == "P.S.":
+            # Handles p.s., p. s., etc.
             postscript_pattern = r"\s*p\.\s?s\..*$"
+        elif marker == "م.":
+            # Handles "م." at the end of a line
+            postscript_pattern = r"\s*م\..*$"
+        elif marker == "ملحوظة":
+            postscript_pattern = r"\s*ملحوظة.*$"
         else:
-            postscript_pattern = r"\s*" + self._postscript_marker.lower() + r".*$"
-        postscript = re.findall(postscript_pattern, value, flags=re.MULTILINE)
+            # Generic fallback for other potential markers
+            postscript_pattern = r"\s*" + re.escape(marker.lower()) + r".*$"
+
+        # Use re.search since findall can be inefficient if we only need one match
+        postscript = re.search(postscript_pattern, value, flags=re.MULTILINE)
         return True if postscript else False
 
 
@@ -788,10 +800,14 @@ class KeywordChecker(Instruction):
         return ["keywords"]
 
     def check_following(self, value):
-        """Check if the response contain the expected keywords."""
+        """Check if the response contain the expected keywords as whole words."""
         for keyword in self._keywords:
             try:
-                if not re.search(keyword, value, flags=re.IGNORECASE):
+                # Use \b for word boundaries. It works reasonably well in modern
+                # regex engines for Unicode. re.escape handles special characters.
+                # We are not using IGNORECASE as it's not applicable to Arabic.
+                pattern = r"\b" + re.escape(keyword) + r"\b"
+                if not re.search(pattern, value):
                     return False
             except Exception as e:
                 print(f"Error in KeywordChecker: {e}")
@@ -864,13 +880,15 @@ class KeywordFrequencyChecker(Instruction):
 
     def check_following(self, value):
         """Checks if the response contain the keyword with required frequency."""
-        actual_occurrences = len(re.findall(self._keyword, value, flags=re.IGNORECASE))
+        # Match whole words only. Remove IGNORECASE flag.
+        pattern = r"\b" + re.escape(self._keyword) + r"\b"
+        actual_occurrences = len(re.findall(pattern, value))
 
-        if self._comparison_relation == _COMPARISON_RELATION[0]:
+        if self._comparison_relation == _COMPARISON_RELATION[0]: # less than
             return actual_occurrences < self._frequency
-        elif self._comparison_relation == _COMPARISON_RELATION[1]:
+        elif self._comparison_relation == _COMPARISON_RELATION[1]: # at least
             return actual_occurrences >= self._frequency
-        elif self._comparison_relation == _COMPARISON_RELATION[2]:
+        elif self._comparison_relation == _COMPARISON_RELATION[2]: # exactly
             return actual_occurrences == self._frequency
 
 
@@ -1032,48 +1050,31 @@ class ParagraphFirstWordCheck(Instruction):
         return ["num_paragraphs", "nth_paragraph", "first_word"]
 
     def check_following(self, value):
-        """Checks for required number of paragraphs and correct first word.
-
-        Args:
-          value: a string representing the response. The response may contain
-            paragraphs that are separated by two new lines and the first word of
-            the nth paragraph will have to match a specified word.
-
-        Returns:
-          True if the number of paragraphs is the same as required and the first
-          word of the specified paragraph is the same as required. Otherwise, false.
-        """
-
+        # ... (code for splitting paragraphs is fine) ...
         paragraphs = re.split(r"\n\n", value)
         num_paragraphs = len(paragraphs)
 
-        for paragraph in paragraphs:
-            if not paragraph.strip():
-                num_paragraphs -= 1
+        # This part can be simplified
+        valid_paragraphs = [p.strip() for p in paragraphs if p.strip()]
+        num_paragraphs = len(valid_paragraphs)
 
-        # check that index doesn't go out of bounds
-        if self._nth_paragraph <= num_paragraphs:
-            paragraph = paragraphs[self._nth_paragraph - 1].strip()
-            if not paragraph:
-                return False
-        else:
+        if self._nth_paragraph <= 0 or self._nth_paragraph > num_paragraphs:
             return False
 
-        first_word = ""
-        punctuation = {".", ",", "?", "!", "'", '"'}
+        paragraph = valid_paragraphs[self._nth_paragraph - 1]
+        words = paragraph.split()
+        if not words:
+            return False
 
-        # get first word and remove punctuation
-        word = paragraph.split()[0].strip()
-        # TODO(jeffrey): make more complex?
-        word = word.lstrip("'")
-        word = word.lstrip('"')
+        first_word_raw = words[0]
 
-        for letter in word:
-            if letter in punctuation:
-                break
-            first_word += letter.lower()
+        # Define a comprehensive set of punctuation to strip from the word
+        # Includes English, Arabic, and common symbols.
+        punctuation_to_strip = r"""!"#$%&'()*+,-./:;<=>?@[]^_`{|}~،؛؟»«…"""
+        first_word_clean = first_word_raw.strip(punctuation_to_strip)
 
-        return num_paragraphs == self._num_paragraphs and first_word == self._first_word
+        # Comparison should be case-insensitive for English and works for Arabic
+        return num_paragraphs == self._num_paragraphs and first_word_clean.lower() == self._first_word.lower()
 
 
 # TODO(jeffrey) add relation - at least/at most?
@@ -1126,12 +1127,26 @@ class KeySentenceChecker(Instruction):
     def check_following(self, value):
         """Checks if the response contains the expected key sentences."""
         count = 0
-        sentences = instructions_util.split_into_sentences(value)
-        for sentence in self._key_sentences:
-            if sentence in sentences:
+        # Define punctuation characters to remove for normalization
+        punctuation_re = re.compile(f"[{re.escape(string.punctuation)}،؛؟]")
+
+        # Normalize and create a set of sentences from the model's output
+        # 1. Split into sentences using our robust function
+        # 2. Lowercase (for English)
+        # 3. Remove all punctuation
+        # 4. Strip whitespace
+        response_sentences = {
+            punctuation_re.sub("", s).lower().strip()
+            for s in instructions_util.split_into_sentences(value)
+        }
+
+        for key_sentence in self._key_sentences:
+            # Normalize the key sentence in the same way
+            normalized_key = punctuation_re.sub("", key_sentence).lower().strip()
+            if normalized_key in response_sentences:
                 count += 1
 
-        return count == self._num_sentences
+        return count >= self._num_sentences # Changed to 'at least' to match description
 
 
 class ForbiddenWords(Instruction):
@@ -1170,10 +1185,12 @@ class ForbiddenWords(Instruction):
         return ["forbidden_words"]
 
     def check_following(self, value):
-        """Check if the response does not contain the expected keywords."""
+        """Check if the response does not contain the forbidden keywords."""
         for word in self._forbidden_words:
             try:
-                if re.search(r"\b" + word + r"\b", value, flags=re.IGNORECASE):
+                # Remove IGNORECASE flag as it's not needed for Arabic
+                pattern = r"\b" + re.escape(word) + r"\b"
+                if re.search(pattern, value):
                     return False
             except Exception as e:
                 print(f"Error in ForbiddenWords: {e}")
@@ -1228,8 +1245,10 @@ class RephraseParagraph(Instruction):
         return ["original_paragraph", "low", "high"]
 
     def check_following(self, value):
-        val_words = re.findall(r"\w+", value.lower())
-        original_words = re.findall(r"\w+", self._original_paragraph.lower())
+        # Use the Unicode-aware regex for finding words
+        ar_en_word_pattern = r'[\w\u0600-\u06FF]+'
+        val_words = re.findall(ar_en_word_pattern, value.lower())
+        original_words = re.findall(ar_en_word_pattern, self._original_paragraph.lower())
         similar_words = 0
 
         dict_val = collections.Counter(val_words)
@@ -1238,7 +1257,7 @@ class RephraseParagraph(Instruction):
         for word in dict_original:
             similar_words += min(dict_original[word], dict_val[word])
 
-        return similar_words >= self._low and similar_words <= self._high
+        return self._low <= similar_words <= self._high
 
 
 class TwoResponsesChecker(Instruction):
@@ -1417,16 +1436,12 @@ class LetterFrequencyChecker(Instruction):
         if let_frequency not in _COMPARISON_RELATION and frequency in _COMPARISON_RELATION:
             let_frequency = frequency
 
-        if (
-            not letter
-            or len(letter) > 1
-            or ord(letter.lower()) < 97
-            or ord(letter.lower()) > 122
-        ):
-            self._letter = random.choice(list(string.ascii_letters))
+        # ADAPTATION: If a letter is not provided, ALWAYS pick a random ARABIC letter.
+        if not letter:
+            self._letter = random.choice(ARABIC_ALPHABET)
         else:
             self._letter = letter.strip()
-        self._letter = self._letter.lower()
+        # self._letter = self._letter.lower()
 
         self._frequency = let_frequency
         if self._frequency is None or self._frequency < 0:
@@ -1467,76 +1482,82 @@ class LetterFrequencyChecker(Instruction):
 
     def check_following(self, value):
         """Checks that the response contains the letter at the right frequency."""
+        # Normalizing to lower is fine for English and harmless for Arabic
         value = value.lower()
         letters = collections.Counter(value)
+        
+        # The letter to check should also be 'lowercased' for consistency
+        letter_to_check = self._letter.lower()
 
-        if self._comparison_relation == _COMPARISON_RELATION[0]:
-            return letters[self._letter] < self._frequency
-        else:
-            return letters[self._letter] >= self._frequency
-
-
-class CapitalLettersEnglishChecker(Instruction):
-    """Checks that the response is in english and is in all capital letters."""
-
-    def build_description(self):
-        """Build the instruction description."""
-        self._description_pattern = (
-            "Your entire response should be in English, and in all capital letters."
-        )
-        return self._description_pattern
-
-    def get_instruction_args(self):
-        return None
-
-    def get_instruction_args_keys(self):
-        """Returns the args keys of `build_description`."""
-        return []
-
-    def check_following(self, value):
-        """Checks that the response is in English and in all capital letters."""
-        assert isinstance(value, str)
-
-        try:
-            return value.isupper() and langdetect.detect(value) == "en"
-        except langdetect.LangDetectException as e:
-            # Count as instruction is followed.
-            logging.error(
-                "Unable to detect language for text %s due to %s", value, e
-            )  # refex: disable=pytotw.037
-            return True
+        if self._comparison_relation == _COMPARISON_RELATION[0]: # less than
+            return letters[letter_to_check] < self._frequency
+        elif self._comparison_relation == _COMPARISON_RELATION[1]: # at least
+            return letters[letter_to_check] >= self._frequency
+        elif self._comparison_relation == _COMPARISON_RELATION[2]: # exactly
+            return letters[letter_to_check] == self._frequency
 
 
-class LowercaseLettersEnglishChecker(Instruction):
-    """Checks that the response is in english and is in all lowercase letters."""
+# class CapitalLettersEnglishChecker(Instruction):
+#     """Checks that the response is in english and is in all capital letters."""
 
-    def build_description(self):
-        """Build the instruction description."""
-        self._description_pattern = (
-            "Your entire response should be in English, and in all lowercase"
-            " letters. No capital letters are allowed."
-        )
-        return self._description_pattern
+#     def build_description(self):
+#         """Build the instruction description."""
+#         self._description_pattern = (
+#             "Your entire response should be in English, and in all capital letters."
+#         )
+#         return self._description_pattern
 
-    def get_instruction_args(self):
-        return None
+#     def get_instruction_args(self):
+#         return None
 
-    def get_instruction_args_keys(self):
-        """Returns the args keys of `build_description`."""
-        return []
+#     def get_instruction_args_keys(self):
+#         """Returns the args keys of `build_description`."""
+#         return []
 
-    def check_following(self, value):
-        """Checks that the response is in English and in all lowercase letters."""
-        assert isinstance(value, str)
+#     def check_following(self, value):
+#         """Checks that the response is in English and in all capital letters."""
+#         assert isinstance(value, str)
 
-        try:
-            return value.islower() and langdetect.detect(value) == "en"
-        except langdetect.LangDetectException as e:
-            # Count as instruction is followed.
-            logging.error(
-                "Unable to detect language for text %s due to %s", value, e
-            )  # refex: disable=pytotw.037
-            return True
+#         try:
+#             return value.isupper() and langdetect.detect(value) == "en"
+#         except langdetect.LangDetectException as e:
+#             # Count as instruction is followed.
+#             logging.error(
+#                 "Unable to detect language for text %s due to %s", value, e
+#             )  # refex: disable=pytotw.037
+#             return True
+
+
+# class LowercaseLettersEnglishChecker(Instruction):
+#     """Checks that the response is in english and is in all lowercase letters."""
+
+#     def build_description(self):
+#         """Build the instruction description."""
+#         self._description_pattern = (
+#             "Your entire response should be in English, and in all lowercase"
+#             " letters. No capital letters are allowed."
+#         )
+#         return self._description_pattern
+
+#     def get_instruction_args(self):
+#         return None
+
+#     def get_instruction_args_keys(self):
+#         """Returns the args keys of `build_description`."""
+#         return []
+
+#     def check_following(self, value):
+#         """Checks that the response is in English and in all lowercase letters."""
+#         assert isinstance(value, str)
+
+#         try:
+#             return value.islower() and langdetect.detect(value) == "en"
+#         except langdetect.LangDetectException as e:
+#             # Count as instruction is followed.
+#             logging.error(
+#                 "Unable to detect language for text %s due to %s", value, e
+#             )  # refex: disable=pytotw.037
+#             return True
 
 
 class CommaChecker(Instruction):
@@ -1562,70 +1583,70 @@ class CommaChecker(Instruction):
         return not (re.search(r"\,", value) or re.search(r"،", value))
 
 
-class CapitalWordFrequencyChecker(Instruction):
-    """Checks frequency of words with all capital letters."""
+# class CapitalWordFrequencyChecker(Instruction):
+#     """Checks frequency of words with all capital letters."""
 
-    def build_description(
-        self,
-        capital_frequency=None,
-        capital_relation=None,
-    ):
-        """Build the instruction description.
+#     def build_description(
+#         self,
+#         capital_frequency=None,
+#         capital_relation=None,
+#     ):
+#         """Build the instruction description.
 
-        Args:
-          capital_frequency: An integer that represents the number of words that
-            should be in all capital letters.
-          capital_relation: A string that is 'at least' or 'at most' that refers to
-            the frequency.
+#         Args:
+#           capital_frequency: An integer that represents the number of words that
+#             should be in all capital letters.
+#           capital_relation: A string that is 'at least' or 'at most' that refers to
+#             the frequency.
 
-        Returns:
-          A string representing the instruction description.
-        """
-        self._frequency = capital_frequency
-        if self._frequency is None:
-            self._frequency = random.randint(1, _ALL_CAPITAL_WORD_FREQUENCY)
+#         Returns:
+#           A string representing the instruction description.
+#         """
+#         self._frequency = capital_frequency
+#         if self._frequency is None:
+#             self._frequency = random.randint(1, _ALL_CAPITAL_WORD_FREQUENCY)
 
-        self._comparison_relation = capital_relation
-        if capital_relation is None:
-            self._comparison_relation = random.choice(_COMPARISON_RELATION)
-        elif capital_relation not in _COMPARISON_RELATION:
-            raise ValueError(
-                "The supported relation for comparison must be in "
-                f"{_COMPARISON_RELATION}, but {capital_relation} is given."
-            )
+#         self._comparison_relation = capital_relation
+#         if capital_relation is None:
+#             self._comparison_relation = random.choice(_COMPARISON_RELATION)
+#         elif capital_relation not in _COMPARISON_RELATION:
+#             raise ValueError(
+#                 "The supported relation for comparison must be in "
+#                 f"{_COMPARISON_RELATION}, but {capital_relation} is given."
+#             )
 
-        self._description_pattern = (
-            "In your response, words with all capital letters should appear"
-            " {relation} {frequency} times."
-        )
+#         self._description_pattern = (
+#             "In your response, words with all capital letters should appear"
+#             " {relation} {frequency} times."
+#         )
 
-        return self._description_pattern.format(
-            frequency=self._frequency, relation=self._comparison_relation
-        )
+#         return self._description_pattern.format(
+#             frequency=self._frequency, relation=self._comparison_relation
+#         )
 
-    def get_instruction_args(self):
-        """Returns the keyword args of build description."""
-        return {
-            "capital_frequency": self._frequency,
-            "capital_relation": self._comparison_relation,
-        }
+#     def get_instruction_args(self):
+#         """Returns the keyword args of build description."""
+#         return {
+#             "capital_frequency": self._frequency,
+#             "capital_relation": self._comparison_relation,
+#         }
 
-    def get_instruction_args_keys(self):
-        """Returns the args keys of `build_description`."""
-        return ["capital_frequency", "capital_relation"]
+#     def get_instruction_args_keys(self):
+#         """Returns the args keys of `build_description`."""
+#         return ["capital_frequency", "capital_relation"]
 
-    def check_following(self, value):
-        """Checks the frequency of words with all capital letters."""
-        # Hyphenated words will count as one word
-        words = instructions_util.nltk.word_tokenize(value)
-        capital_words = [word for word in words if word.isupper()]
+#     def check_following(self, value):
+#         """Checks the frequency of words with all capital letters."""
+#         # Hyphenated words will count as one word
+#         words = instructions_util.nltk.word_tokenize(value)
+#         capital_words = [word for word in words if word.isupper()]
 
-        capital_words = len(capital_words)
+#         capital_words = len(capital_words)
 
-        if self._comparison_relation == _COMPARISON_RELATION[0]:
-            return capital_words < self._frequency
-        else:
-            return capital_words >= self._frequency
+#         if self._comparison_relation == _COMPARISON_RELATION[0]:
+#             return capital_words < self._frequency
+#         else:
+#             return capital_words >= self._frequency
 
 
 class QuotationChecker(Instruction):
@@ -1705,7 +1726,8 @@ class ListKeywordFrequencyChecker(Instruction):
     def check_following(self, value):
         """Checks that the response contains the letter at the right frequency."""
         count_dict = {letter: 0 for letter in self._letters}
-        words = re.findall(r'\b\w+\b', value)
+        # Use the Unicode-aware regex
+        words = re.findall(r'[\w\u0600-\u06FF]+', value)
 
         for word in words:
             if self._position == 'start':
@@ -1754,11 +1776,14 @@ class ListKeywordExistenceChecker(Instruction):
     
     def check_following(self, value):
         """Checks that the response contains the keywords in the right mode."""
-        words = re.findall(r'\b\w+\b', value)
+        # Use the Unicode-aware regex
+        words_in_response = set(re.findall(r'[\w\u0600-\u06FF]+', value))
+        keywords_to_check = set(self._keywords)
+        
         if self._mode == "all":
-            return all(keyword in words for keyword in self._keywords)
+            return keywords_to_check.issubset(words_in_response)
         elif self._mode == "any":
-            return any(keyword in words for keyword in self._keywords)
+            return not keywords_to_check.isdisjoint(words_in_response)
         else:
             raise ValueError(f"Unsupported mode type: {self._mode}")
 
