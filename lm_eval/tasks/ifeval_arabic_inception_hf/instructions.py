@@ -166,21 +166,6 @@ class ResponseLanguageChecker(Instruction):
         """Returns the args keys of `build_description`."""
         return ["language"]
 
-    # def language_composition(self, text):
-    #     words = re.findall(r'\b\w+\b', text)
-    #     lang_counts = Counter()\
-    #     import ipdb; ipdb.set_trace()
-    #     for word in words:
-    #         try:
-    #             lang = langdetect.detect(word)
-    #             lang_counts[lang] += 1
-    #         except:
-    #             pass
-
-    #     total = sum(lang_counts.values())
-    #     composition = {lang: round(count / total * 100, 2) for lang, count in lang_counts.items()}
-    #     return composition
-
     def check_following(self, value):
         """Check if the language of the entire response follows the instruction.
 
