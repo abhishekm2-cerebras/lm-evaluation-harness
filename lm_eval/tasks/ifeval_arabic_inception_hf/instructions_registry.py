@@ -66,9 +66,9 @@ INSTRUCTION_DICT = {
     _COMBINATION + "two_responses": instructions.TwoResponsesChecker,
     _COMBINATION + "repeat_prompt": instructions.RepeatPromptThenAnswer,
     _STARTEND + "end_checker": instructions.EndChecker,
-    _CHANGE_CASES + "capital_word_frequency": instructions.CapitalWordFrequencyChecker,
-    _CHANGE_CASES + "english_capital": instructions.CapitalLettersEnglishChecker,
-    _CHANGE_CASES + "english_lowercase": instructions.LowercaseLettersEnglishChecker,
+    # _CHANGE_CASES + "capital_word_frequency": instructions.CapitalWordFrequencyChecker,
+    # _CHANGE_CASES + "english_capital": instructions.CapitalLettersEnglishChecker,
+    # _CHANGE_CASES + "english_lowercase": instructions.LowercaseLettersEnglishChecker,
     _PUNCTUATION + "no_comma": instructions.CommaChecker,
     _STARTEND + "quotation": instructions.QuotationChecker,
     # Arabic specific instreuctions 

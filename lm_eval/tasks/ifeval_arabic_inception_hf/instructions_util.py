@@ -20,6 +20,8 @@ import random
 import re
 from importlib.metadata import version
 
+from typing import List
+
 import immutabledict
 import nltk
 from packaging.version import parse as parse_version
