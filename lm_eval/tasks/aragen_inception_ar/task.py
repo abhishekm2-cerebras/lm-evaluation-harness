@@ -6,13 +6,14 @@ import logging
 
 from lm_eval.api.instance import Instance
 from lm_eval.api.task import ConfigurableTask
-from lm_eval.tasks.aragen_inception_ar.gemini_client import gemini_generate
+import os
 
 
 
 class AragenInceptionArTask(ConfigurableTask):
     VERSION = 0 
-    DATASET_PATH = "/mnt/local/shared/abhishekm/datasets/inception-aragen-ar"
+    # Get the path of the folder in which this script is located
+    DATASET_PATH = os.path.dirname(os.path.abspath(__file__))
     DATASET_NAME = "default" 
     data_files = {"validation": "inception_aragen_samples.jsonl"}
 

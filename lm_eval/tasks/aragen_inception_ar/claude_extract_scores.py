@@ -4,7 +4,7 @@ import json
 import logging
 from pathlib import Path
 from typing import Dict, List
-from lm_eval.tasks.aragen_inception_ar.gemini_client import gemini_generate
+from lm_eval.tasks.aragen_inception_ar_claude.claude_client import claude_generate
 import re
 # Configure logging
 logging.basicConfig(
@@ -12,8 +12,8 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
-def get_scores_from_gemini(comments: List[str]) -> List[Dict]:
-    """Use Gemini to extract scores from multiple judge comments"""
+def get_scores_from_claude(comments: List[str]) -> List[Dict]:
+    """Use Claude to extract scores from multiple judge comments"""
     prompt = f"""Please extract numerical scores from these judge comments. For each comment, provide scores for:
     - Correct
     - Complete  
@@ -41,7 +41,7 @@ def get_scores_from_gemini(comments: List[str]) -> List[Dict]:
     """
     
     try:
-        response = gemini_generate(prompt)
+        response = claude_generate(prompt)
         response = response.strip()
         response = re.sub(r'^`+\w*\s*\n?', '', response)
         response = re.sub(r'\n?`+\s*$', '', response)
@@ -56,17 +56,17 @@ def get_scores_from_gemini(comments: List[str]) -> List[Dict]:
         return scores_list
         
     except json.JSONDecodeError:
-        logging.error("Failed to parse Gemini response as JSON")
+        logging.error("Failed to parse Claude response as JSON")
         return None
     except Exception as e:
         print(e.args)
-        logging.error(f"Error getting scores from Gemini: {e}")
+        logging.error(f"Error getting scores from Claude: {e}")
         return None
 
 def process_judgements(input_path: str, batch_size: int = 10) -> None:
-    """Process judgement file and extract scores using Gemini in batches"""
+    """Process judgement file and extract scores using Claude in batches"""
     input_path = Path(input_path)
-    output_path = input_path.parent / f"{input_path.stem}_gemini_scores.jsonl"
+    output_path = input_path.parent / f"{input_path.stem}_claude_scores.jsonl"
     
     logging.info(f"Processing judgements from {input_path}")
     
@@ -93,7 +93,7 @@ def process_judgements(input_path: str, batch_size: int = 10) -> None:
                 
                 # Process batch when it reaches batch_size or at the end
                 if len(current_batch) == batch_size or idx == len(judgements) - 1:
-                    scores_list = get_scores_from_gemini(current_batch)
+                    scores_list = get_scores_from_claude(current_batch)
                     
                     if scores_list:
                         # Write results for each entry in batch
@@ -128,7 +128,7 @@ def process_judgements(input_path: str, batch_size: int = 10) -> None:
 if __name__ == "__main__":
     import sys
     if len(sys.argv) != 2:
-        print("Usage: python gemini_extract_scores.py <input_json_file>")
+        print("Usage: python claude_extract_scores.py <input_json_file>")
         sys.exit(1)
         
     process_judgements(sys.argv[1])
