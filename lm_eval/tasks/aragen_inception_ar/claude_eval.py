@@ -22,6 +22,54 @@ def chunk_list(lst: List, chunk_size: int) -> List[List]:
     """Split list into chunks of specified size"""
     return [lst[i:i + chunk_size] for i in range(0, len(lst), chunk_size)]
 
+# -----------------------------
+# Score loading + aggregation
+# -----------------------------
+def _extract_score_rows_from_scored_jsonl(scored_jsonl_path: str) -> List[Dict]:
+    """
+    Load a *_claude_scored.jsonl produced by this script and return the per-doc
+    evaluation dicts (each containing metric -> {score, justification}, plus metadata).
+    """
+    rows: List[Dict] = []
+    with open(scored_jsonl_path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            obj = json.loads(line)
+            rows.append(obj)
+    return rows
+
+
+def _calculate_final_scores_from_rows(score_rows: List[Dict]) -> Dict[str, float]:
+    """
+    Compute mean scores for each parameter from rows written by this script.
+    """
+    parameters = ['Correct', 'Complete', 'Concise', 'Helpful', 'Honest', 'Harmless', 'Total']
+    final_scores: Dict[str, float] = {}
+    for param in parameters:
+        vals: List[float] = []
+        for row in score_rows:
+            if param not in row:
+                continue
+            metric_obj = row[param]
+            if isinstance(metric_obj, dict) and 'score' in metric_obj:
+                vals.append(metric_obj['score'])
+        if vals:
+            final_scores[param] = mean(vals)
+    return final_scores
+
+
+def _write_final_scores_json(final_scores_path: str, final_scores: Dict[str, float], *, source_file: str, num_samples: int) -> None:
+    payload = {
+        "source_file": source_file,
+        "num_samples": num_samples,
+        "final_scores": final_scores,
+    }
+    with open(final_scores_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+
+
 # This function is used to mimic the exact implementation of 3C3H scores for aragen
 def extract_scores_and_justifications(claude_response: str, batch: List[Dict]) -> Dict:
     """Extract scores and justifications from Claude's response"""
@@ -57,16 +105,27 @@ def extract_scores_and_justifications(claude_response: str, batch: List[Dict]) -
 def evaluate_responses(jsonl_path: str, batch_size: int = 5, force_recompute: bool = False) -> Dict[str, float]:
     """Evaluate responses from jsonl file using Claude and log results"""
     
+    # If the user points directly at a scored jsonl, just recompute aggregates from it.
     if jsonl_path.endswith("_claude_scored.jsonl"):
-        logging.info(f"Skipping evaluation of {jsonl_path} because it already exists")
-        return None
+        logging.info(f"Recomputing final scores from existing scored file: {jsonl_path}")
+        score_rows = _extract_score_rows_from_scored_jsonl(jsonl_path)
+        final_scores = _calculate_final_scores_from_rows(score_rows)
+        final_scores_path = os.path.join(os.path.dirname(jsonl_path), "final_scores.json")
+        _write_final_scores_json(final_scores_path, final_scores, source_file=jsonl_path, num_samples=len(score_rows))
+        logging.info(f"Wrote final scores to {final_scores_path}")
+        return final_scores
 
     logging.info(f"Starting evaluation of responses from {jsonl_path}")
     output_path = jsonl_path.replace(".jsonl", "_claude_scored.jsonl")
 
     if not force_recompute and os.path.exists(output_path):
-        logging.info(f"Skipping evaluation of {jsonl_path} because it already exists")
-        return None
+        logging.info(f"Found existing scored output {output_path}; recomputing final scores from it (no Claude calls)")
+        score_rows = _extract_score_rows_from_scored_jsonl(output_path)
+        final_scores = _calculate_final_scores_from_rows(score_rows)
+        final_scores_path = os.path.join(os.path.dirname(output_path), "final_scores.json")
+        _write_final_scores_json(final_scores_path, final_scores, source_file=output_path, num_samples=len(score_rows))
+        logging.info(f"Wrote final scores to {final_scores_path}")
+        return final_scores
     elif os.path.exists(output_path):
         os.remove(output_path)
         logging.info(f"Removed existing output file {output_path}")
@@ -174,6 +233,9 @@ def evaluate_responses(jsonl_path: str, batch_size: int = 5, force_recompute: bo
         param: mean(score[param]['score'] for score in all_scores if param in score)
         for param in parameters
     }
+    final_scores_path = os.path.join(os.path.dirname(output_path), "final_scores.json")
+    _write_final_scores_json(final_scores_path, final_scores, source_file=output_path, num_samples=len(all_scores))
+    logging.info(f"Wrote final scores to {final_scores_path}")
 
     logging.info("Evaluation completed successfully")
     return final_scores
@@ -189,7 +251,7 @@ if __name__ == "__main__":
     results_dir = args.result_path
     for root, dirs, files in os.walk(results_dir):
         for file in files:
-            if file.endswith('.jsonl') and not "saba" in file and not file.endswith("_claude_scored.jsonl"):
+            if file.endswith('.jsonl') and not "saba" in file:
                 file_path = os.path.join(root, file)
                 model_name = os.path.basename(os.path.dirname(root))
                 logging.info(f"Evaluating {model_name} from {file_path}")
@@ -200,7 +262,9 @@ if __name__ == "__main__":
                     logging.info(f"\nFinal Average Scores for {model_name}:")
                     for param, score in results.items():
                         logging.info(f"{param}: {score:.3f}")
-                    skipped_files = len(os.listdir(os.path.join(root, "claude_errors")))
-                    logging.info(f"Skipped {skipped_files} files due to errors")
+                    error_dir = os.path.join(root, "claude_errors")
+                    if os.path.exists(error_dir):
+                        skipped_files = len(os.listdir(error_dir))
+                        logging.info(f"Skipped {skipped_files} files due to errors")
                 else:
                     logging.error(f"Failed to evaluate {file_path}")
