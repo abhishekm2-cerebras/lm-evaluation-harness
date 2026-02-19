@@ -1,0 +1,5 @@
+"dataset_name": "General Knowledge (Primary School)"
+"include": "_default_arabicmmlu_generative_template_yaml"
+"tag": "arabicmmlu_generative_other_tasks"
+"task": "arabicmmlu_generative_general_knowledge_primary_school"
+"task_alias": "General Knowledge (Primary School)"

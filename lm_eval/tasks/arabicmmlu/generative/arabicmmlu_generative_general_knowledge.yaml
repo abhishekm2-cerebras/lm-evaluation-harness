@@ -1,0 +1,5 @@
+"dataset_name": "General Knowledge"
+"include": "_default_arabicmmlu_generative_template_yaml"
+"tag": "arabicmmlu_generative_other_tasks"
+"task": "arabicmmlu_generative_general_knowledge"
+"task_alias": "General Knowledge"

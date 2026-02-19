@@ -1,0 +1,10 @@
+aggregate_metric_list:
+-   filter_list: get_response
+    metric: exact_match
+    weight_by_size: true
+group: arabicmmlu_generative_humanities
+group_alias: Humanities
+metadata:
+    version: 1
+task:
+- arabicmmlu_generative_humanities_tasks

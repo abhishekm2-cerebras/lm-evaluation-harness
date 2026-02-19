@@ -1,0 +1,10 @@
+aggregate_metric_list:
+-   filter_list: get_response
+    metric: exact_match
+    weight_by_size: true
+group: arabicmmlu_generative_language
+group_alias: Language
+metadata:
+    version: 1
+task:
+- arabicmmlu_generative_language_tasks

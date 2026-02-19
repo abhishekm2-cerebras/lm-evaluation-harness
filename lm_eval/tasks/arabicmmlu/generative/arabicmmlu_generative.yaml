@@ -1,0 +1,14 @@
+aggregate_metric_list:
+-   aggregation: mean
+    filter_list: get_response
+    metric: exact_match
+    weight_by_size: true
+group: arabicmmlu_generative
+metadata:
+    version: 1
+task:
+- arabicmmlu_generative_humanities
+- arabicmmlu_generative_other
+- arabicmmlu_generative_stem
+- arabicmmlu_generative_social_science
+- arabicmmlu_generative_language
