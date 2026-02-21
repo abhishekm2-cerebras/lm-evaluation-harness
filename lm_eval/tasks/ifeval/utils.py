@@ -3,6 +3,12 @@ from typing import Dict, Optional, Union
 
 from lm_eval.tasks.ifeval import instructions_registry
 
+THINKING_CLOSE_TAGS = (
+    "</think>",
+    "</think_fast>",
+    "</think_faster>",
+)
+
 
 @dataclasses.dataclass
 class InputExample:
@@ -19,6 +25,26 @@ class OutputExample:
     response: str
     follow_all_instructions: bool
     follow_instruction_list: list[bool]
+
+
+def extract_answer_after_last_think_close(text: str) -> str:
+    """Return everything after the last recognized thinking closing tag.
+
+    If no closing tag is found, return the original text.
+    """
+    last_match_idx = -1
+    last_tag = None
+
+    for tag in THINKING_CLOSE_TAGS:
+        idx = text.rfind(tag)
+        if idx > last_match_idx:
+            last_match_idx = idx
+            last_tag = tag
+
+    if last_match_idx == -1 or last_tag is None:
+        return text
+
+    return text[last_match_idx + len(last_tag):]
 
 
 def test_instruction_following_strict(
@@ -115,7 +141,8 @@ def process_results(doc, results):
         prompt=doc["prompt"],
         kwargs=doc["kwargs"],
     )
-    response = results[0]
+    response_raw = str(results[0]) if results and results[0] is not None else ""
+    response = extract_answer_after_last_think_close(response_raw)
 
     out_strict = test_instruction_following_strict(inp, response)
     out_loose = test_instruction_following_loose(inp, response)
