@@ -1,0 +1,3 @@
+dataset_name: gpqa_diamond
+include: _gpqa_generative_judge_yaml
+task: gpqa_diamond_generative

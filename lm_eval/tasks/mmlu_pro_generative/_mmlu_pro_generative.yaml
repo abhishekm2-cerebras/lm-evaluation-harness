@@ -1,0 +1,23 @@
+group: mmlu_pro_generative
+task:
+  - mmlu_pro_biology_generative
+  - mmlu_pro_business_generative
+  - mmlu_pro_chemistry_generative
+  - mmlu_pro_computer_science_generative
+  - mmlu_pro_economics_generative
+  - mmlu_pro_engineering_generative
+  - mmlu_pro_health_generative
+  - mmlu_pro_history_generative
+  - mmlu_pro_law_generative
+  - mmlu_pro_math_generative
+  - mmlu_pro_other_generative
+  - mmlu_pro_philosophy_generative
+  - mmlu_pro_physics_generative
+  - mmlu_pro_psychology_generative
+aggregate_metric_list:
+  - aggregation: mean
+    metric: exact_match
+    weight_by_size: true
+    filter_list: custom-extract
+metadata:
+  version: 1.0
