@@ -139,12 +139,25 @@ class VLLM(TemplateLM):
             )
 
         if parse_version(version("vllm")) >= parse_version("0.8.3"):
-            self.hf_chat_template = resolve_hf_chat_template(
-                tokenizer=self.tokenizer,
-                chat_template=None,
-                tools=None,
-                trust_remote_code=trust_remote_code,
-            )
+            try:
+                self.hf_chat_template = resolve_hf_chat_template(
+                    tokenizer=self.tokenizer,
+                    chat_template=None,
+                    tools=None,
+                    trust_remote_code=trust_remote_code,
+                )
+            except TypeError:
+                # vLLM >= 0.16 changed the signature — requires model_config
+                try:
+                    vllm_model_config = self.model.llm_engine.model_config
+                    self.hf_chat_template = resolve_hf_chat_template(
+                        tokenizer=self.tokenizer,
+                        chat_template=None,
+                        tools=None,
+                        model_config=vllm_model_config,
+                    )
+                except Exception:
+                    self.hf_chat_template = None
         else:
             self.hf_chat_template = None
 
@@ -163,6 +176,18 @@ class VLLM(TemplateLM):
             self.lora_request = LoRARequest("finetuned", 1, lora_local_path)
         else:
             self.lora_request = None
+
+        # vLLM >= 0.16 removed prompt_token_ids kwarg from LLM.generate().
+        # Wrap the generate method to auto-convert for backward compatibility.
+        self._vllm_needs_tokens_prompt = parse_version(version("vllm")) >= parse_version("0.16")
+
+    def _generate_with_token_ids(self, token_id_lists, sampling_params, **kwargs):
+        """Wrapper for LLM.generate() that handles both old and new vLLM APIs."""
+        if self._vllm_needs_tokens_prompt:
+            from vllm.inputs.llm import TokensPrompt
+            prompts = [TokensPrompt(prompt_token_ids=ids) for ids in token_id_lists]
+            return self.model.generate(prompts=prompts, sampling_params=sampling_params, **kwargs)
+        return self.model.generate(prompt_token_ids=token_id_lists, sampling_params=sampling_params, **kwargs)
 
     @property
     def eot_token_id(self):
@@ -319,9 +344,8 @@ class VLLM(TemplateLM):
                     outputs_thinking = [None] * len(requests_thinking)
                     i = 0
                     while True:
-                        outputs_tmp = self.model.generate(
-                            prompt_token_ids=requests_thinking,
-                            sampling_params=sampling_params,
+                        outputs_tmp = self._generate_with_token_ids(
+                            requests_thinking, sampling_params,
                             use_tqdm=True if self.batch_size == "auto" else False,
                         )
                         # Save ones that are already below the limit
@@ -367,9 +391,8 @@ class VLLM(TemplateLM):
                     requests_tmp = copy.deepcopy(requests)
                     indices = list(range(len(requests)))
                     for i in range(thinking_n_ignore):
-                        outputs_tmp = self.model.generate(
-                            prompt_token_ids=requests_tmp,
-                            sampling_params=sampling_params,
+                        outputs_tmp = self._generate_with_token_ids(
+                            requests_tmp, sampling_params,
                             use_tqdm=True if self.batch_size == "auto" else False,
                         )
                         indices_new = []
@@ -416,9 +439,8 @@ class VLLM(TemplateLM):
 
                     
                 else:
-                    outputs_thinking = self.model.generate(
-                        prompt_token_ids=requests,
-                        sampling_params=sampling_params,
+                    outputs_thinking = self._generate_with_token_ids(
+                        requests, sampling_params,
                         use_tqdm=True if self.batch_size == "auto" else False,
                     )
                 
@@ -460,11 +482,11 @@ class VLLM(TemplateLM):
                 lora_request: LoRARequest,
             ):
                 llm = LLM(**model_args)
-                return llm.generate(
-                    prompt_token_ids=requests,
-                    sampling_params=sampling_params,
-                    lora_request=lora_request,
-                )
+                if parse_version(version("vllm")) >= parse_version("0.16"):
+                    from vllm.inputs.llm import TokensPrompt
+                    prompts = [TokensPrompt(prompt_token_ids=ids) for ids in requests]
+                    return llm.generate(prompts=prompts, sampling_params=sampling_params, lora_request=lora_request)
+                return llm.generate(prompt_token_ids=requests, sampling_params=sampling_params, lora_request=lora_request)
 
             # dispatch requests to all self.data_parallel_size workers, in interleaved fashion
             # interleaved important to balance context lengths across workers
@@ -480,9 +502,8 @@ class VLLM(TemplateLM):
             # flatten results
             return undistribute(results)
 
-        outputs = self.model.generate(
-            prompt_token_ids=requests,
-            sampling_params=sampling_params,
+        outputs = self._generate_with_token_ids(
+            requests, sampling_params,
             use_tqdm=True if self.batch_size == "auto" else False,
             lora_request=self.lora_request,
         )
